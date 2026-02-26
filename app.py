@@ -102,14 +102,7 @@ async def run_watch(resy: ResyClient, params: dict, notify):
                     )
                 except Exception:
                     return
-            else:
-                available = [s.get("date", {}).get("start", "?") for s in slots]
-                try:
-                    await notify(
-                        f"[{now}] No match. Available: {', '.join(available) if available else 'none'}"
-                    )
-                except Exception:
-                    return
+            # No match — silently continue polling
 
     except asyncio.CancelledError:
         # Mark watch as stopped in log
