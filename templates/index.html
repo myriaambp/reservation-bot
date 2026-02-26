@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resy Reservation Bot</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #f5f5f5;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    background: #1a1a2e;
+    color: #fff;
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  header h1 {
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  #log-btn {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+
+  #log-btn:hover { background: rgba(255,255,255,0.25); }
+
+  #chat-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .msg {
+    max-width: 75%;
+    padding: 10px 14px;
+    border-radius: 16px;
+    line-height: 1.5;
+    font-size: 14px;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+  }
+
+  .msg.user {
+    align-self: flex-end;
+    background: #1a1a2e;
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+
+  .msg.bot {
+    align-self: flex-start;
+    background: #fff;
+    color: #222;
+    border: 1px solid #e0e0e0;
+    border-bottom-left-radius: 4px;
+  }
+
+  .msg.watch {
+    align-self: flex-start;
+    background: #fff8e1;
+    color: #6d4c00;
+    border: 1px solid #ffe082;
+    border-bottom-left-radius: 4px;
+    font-size: 13px;
+    font-family: monospace;
+  }
+
+  .msg.typing {
+    align-self: flex-start;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-bottom-left-radius: 4px;
+    color: #999;
+    font-style: italic;
+  }
+
+  #input-area {
+    padding: 14px 20px;
+    background: #fff;
+    border-top: 1px solid #e0e0e0;
+    display: flex;
+    gap: 10px;
+  }
+
+  #msg-input {
+    flex: 1;
+    padding: 10px 14px;
+    border: 1px solid #ddd;
+    border-radius: 20px;
+    font-size: 14px;
+    outline: none;
+  }
+
+  #msg-input:focus { border-color: #1a1a2e; }
+
+  #send-btn {
+    background: #1a1a2e;
+    color: #fff;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+
+  #send-btn:hover { background: #16213e; }
+  #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Log panel */
+  #log-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 100;
+  }
+
+  #log-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(420px, 90vw);
+    background: #fff;
+    z-index: 101;
+    display: none;
+    flex-direction: column;
+    box-shadow: -4px 0 20px rgba(0,0,0,0.15);
+  }
+
+  #log-panel.open { display: flex; }
+  #log-overlay.open { display: block; }
+
+  #log-header {
+    padding: 14px 20px;
+    background: #1a1a2e;
+    color: #fff;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  #log-header h2 { font-size: 16px; font-weight: 600; }
+
+  #log-close {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 22px;
+    cursor: pointer;
+  }
+
+  #log-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .log-section { margin-bottom: 20px; }
+  .log-section h3 {
+    font-size: 14px;
+    color: #666;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .log-entry {
+    background: #f9f9f9;
+    border: 1px solid #eee;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+
+  .log-entry strong { color: #1a1a2e; }
+  .log-entry .meta { color: #888; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Resy Reservation Bot</h1>
+  <button id="log-btn" onclick="toggleLog()">View Log</button>
+</header>
+
+<div id="chat-area">
+  <div class="msg bot">Hi! I can help you find and book restaurant reservations on Resy. Try something like "Find a table at Commerce Inn for 2 on March 8".</div>
+</div>
+
+<div id="input-area">
+  <input id="msg-input" type="text" placeholder="Type a message..." autocomplete="off" />
+  <button id="send-btn" onclick="sendMessage()">Send</button>
+</div>
+
+<div id="log-overlay" onclick="toggleLog()"></div>
+<div id="log-panel">
+  <div id="log-header">
+    <h2>Reservation Log</h2>
+    <button id="log-close" onclick="toggleLog()">&times;</button>
+  </div>
+  <div id="log-content"></div>
+</div>
+
+<script>
+  const chatArea = document.getElementById('chat-area');
+  const msgInput = document.getElementById('msg-input');
+  const sendBtn = document.getElementById('send-btn');
+  let ws;
+  let typingEl = null;
+
+  function connect() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+    ws.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      removeTyping();
+
+      if (data.type === 'bot_message') {
+        addMessage(data.text, 'bot');
+      } else if (data.type === 'watch_update') {
+        addMessage(data.text, 'watch');
+      } else if (data.type === 'typing') {
+        showTyping();
+      }
+
+      sendBtn.disabled = false;
+    };
+
+    ws.onclose = () => {
+      setTimeout(connect, 2000);
+    };
+
+    ws.onerror = () => {
+      ws.close();
+    };
+  }
+
+  function addMessage(text, cls) {
+    const div = document.createElement('div');
+    div.className = `msg ${cls}`;
+    div.textContent = text;
+    chatArea.appendChild(div);
+    chatArea.scrollTop = chatArea.scrollHeight;
+  }
+
+  function showTyping() {
+    if (typingEl) return;
+    typingEl = document.createElement('div');
+    typingEl.className = 'msg typing';
+    typingEl.textContent = 'Thinking...';
+    chatArea.appendChild(typingEl);
+    chatArea.scrollTop = chatArea.scrollHeight;
+  }
+
+  function removeTyping() {
+    if (typingEl) {
+      typingEl.remove();
+      typingEl = null;
+    }
+  }
+
+  function sendMessage() {
+    const text = msgInput.value.trim();
+    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+    addMessage(text, 'user');
+    ws.send(JSON.stringify({ type: 'message', text }));
+    msgInput.value = '';
+    sendBtn.disabled = true;
+  }
+
+  msgInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') sendMessage();
+  });
+
+  async function toggleLog() {
+    const panel = document.getElementById('log-panel');
+    const overlay = document.getElementById('log-overlay');
+
+    if (panel.classList.contains('open')) {
+      panel.classList.remove('open');
+      overlay.classList.remove('open');
+      return;
+    }
+
+    // Fetch and render log
+    try {
+      const resp = await fetch('/api/log');
+      const entries = await resp.json();
+      renderLog(entries);
+    } catch (e) {
+      document.getElementById('log-content').innerHTML = '<p>Failed to load log.</p>';
+    }
+
+    panel.classList.add('open');
+    overlay.classList.add('open');
+  }
+
+  function renderLog(entries) {
+    const container = document.getElementById('log-content');
+
+    if (!entries.length) {
+      container.innerHTML = '<p>No entries yet.</p>';
+      return;
+    }
+
+    const watching = entries.filter(e => e.status === 'watching');
+    const booked = entries.filter(e => e.status === 'booked');
+    const stopped = entries.filter(e => e.status === 'stopped');
+
+    let html = '';
+
+    if (watching.length) {
+      html += '<div class="log-section"><h3>Watching for cancellations</h3>';
+      for (const e of watching) {
+        const times = (e.preferred_times || []).join(', ');
+        html += `<div class="log-entry">
+          <strong>${e.venue}</strong> &mdash; ${e.date}, party of ${e.party_size}<br>
+          Looking for: ${times}<br>
+          <span class="meta">Started: ${e.created_at || 'N/A'}</span>
+        </div>`;
+      }
+      html += '</div>';
+    }
+
+    if (booked.length) {
+      html += '<div class="log-section"><h3>Confirmed reservations</h3>';
+      for (const e of booked) {
+        html += `<div class="log-entry">
+          <strong>${e.venue}</strong> &mdash; ${e.date} at ${e.time || 'N/A'}, party of ${e.party_size}<br>
+          <span class="meta">Token: ${e.confirmation_token || 'N/A'} &bull; Booked: ${e.booked_at || 'N/A'}</span>
+        </div>`;
+      }
+      html += '</div>';
+    }
+
+    if (stopped.length) {
+      html += '<div class="log-section"><h3>Stopped watches</h3>';
+      for (const e of stopped) {
+        const times = (e.preferred_times || []).join(', ');
+        html += `<div class="log-entry">
+          <strong>${e.venue}</strong> &mdash; ${e.date}, was looking for: ${times}<br>
+          <span class="meta">Stopped: ${e.stopped_at || 'N/A'}</span>
+        </div>`;
+      }
+      html += '</div>';
+    }
+
+    container.innerHTML = html || '<p>No entries yet.</p>';
+  }
+
+  connect();
+</script>
+</body>
+</html>

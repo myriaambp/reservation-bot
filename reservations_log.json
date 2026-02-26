@@ -1,0 +1,39 @@
+[
+  {
+    "status": "stopped",
+    "venue": "The Commerce Inn",
+    "venue_id": 53342,
+    "date": "2026-03-08",
+    "party_size": 2,
+    "preferred_times": [
+      "14:30",
+      "15:00"
+    ],
+    "created_at": "2026-02-25T20:16:46.104415",
+    "stopped_at": "2026-02-25T20:16:55.529672"
+  },
+  {
+    "status": "stopped",
+    "venue": "The Commerce Inn",
+    "venue_id": 53342,
+    "date": "2026-03-08",
+    "party_size": 2,
+    "preferred_times": [
+      "14:30",
+      "15:00"
+    ],
+    "created_at": "2026-02-25T20:17:10.760575",
+    "stopped_at": "2026-02-25T20:47:41.305068"
+  },
+  {
+    "status": "watching",
+    "venue": "The Commerce Inn",
+    "venue_id": 53342,
+    "date": "2026-03-08",
+    "party_size": 2,
+    "preferred_times": [
+      "14:30"
+    ],
+    "created_at": "2026-02-25T20:47:13.954864"
+  }
+]

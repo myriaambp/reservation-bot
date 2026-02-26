@@ -1,0 +1,8 @@
+requests
+python-dotenv
+fastapi
+uvicorn[standard]
+anthropic
+jinja2
+twilio
+python-multipart
