@@ -32,6 +32,22 @@ When the user wants to cancel, call list_reservations to show their upcoming res
 Ask which one they want to cancel. Once they pick one, confirm they're sure, then call
 cancel_reservation with the resy_token.
 
+WATCHING FOR CANCELLATIONS / SNIPING:
+When the user wants to watch for a time slot to open up, or "snipe" when tables are released:
+1. First call find_slots (if not already done) to set up venue context.
+2. Call prepare_watch with a time — this fetches cancellation terms for the venue.
+   Present ALL terms (policy, fees, deadline) to the user and explain that once armed,
+   the bot will auto-book instantly when a match is found.
+3. Only call confirm_watch after the user agrees to the terms.
+   - preferred_times: list of "HH:MM" or "HH:MM-HH:MM" range strings.
+     Examples: ["19:00"], ["19:00-21:30"], ["18:00", "19:00", "20:00"]
+     Use ranges when the user says "anything between 7 and 9:30 PM" → ["19:00-21:30"]
+   - snipe_at: optional ISO datetime for when tables are released (e.g. "2026-03-16T09:00:00").
+     Ask the user what time the restaurant releases tables, then build this datetime.
+     The bot will sleep until 30s before this time, then poll aggressively every 2 seconds.
+   - dates: optional list of "YYYY-MM-DD" strings for multi-date watching.
+     Defaults to the single date from venue context. Use when user wants to check multiple dates.
+
 IMPORTANT:
 - Pass the EXACT time string from find_slots to prepare_booking.
 - If a tool returns an error, share the error with the user.
@@ -92,15 +108,31 @@ TOOLS = [
             ),
         ),
         types.FunctionDeclaration(
-            name="watch_for_cancellations",
-            description="Watch for a preferred time slot to open up. Polls periodically and notifies when a match is found.",
+            name="prepare_watch",
+            description="Prepare a watch for a time slot to open up. Fetches cancellation terms for the venue. Present these terms to the user and explain that once armed, the bot will auto-book instantly when a match is found. Wait for confirmation before calling confirm_watch.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "time": types.Schema(type="STRING", description="Any available time from find_slots to look up terms, e.g. '2026-03-09 21:15:00'. If no slots exist, omit and the system will fetch terms using any available slot."),
+                },
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="confirm_watch",
+            description="Arm the watch after user has accepted the cancellation terms from prepare_watch. The bot will auto-book instantly when a matching slot opens.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
                     "preferred_times": types.Schema(
                         type="ARRAY",
                         items=types.Schema(type="STRING"),
-                        description="Preferred times in HH:MM 24h format, e.g. ['14:30', '15:00']",
+                        description="Preferred times as HH:MM or HH:MM-HH:MM ranges, e.g. ['19:00'] or ['19:00-21:30']",
+                    ),
+                    "snipe_at": types.Schema(type="STRING", description="Optional ISO datetime when tables are released, e.g. '2026-03-16T09:00:00'. Bot sleeps until 30s before, then polls every 2 seconds."),
+                    "dates": types.Schema(
+                        type="ARRAY",
+                        items=types.Schema(type="STRING"),
+                        description="Optional list of YYYY-MM-DD dates to watch. Defaults to the single date from venue context.",
                     ),
                 },
                 required=["preferred_times"],
@@ -181,8 +213,10 @@ class ChatSession:
         self._slot_cache: dict[str, dict] = {}   # start_time → raw slot dict
         self._venue_context: dict | None = None   # venue_id, venue_name, party_size, date
         self._pending_booking: dict | None = None # config_token, time, details (terms only)
+        self._pending_watch: dict | None = None   # terms + venue_context for confirm_watch
         self._last_booking: dict | None = None    # saved after confirm for calendar on demand
         self._pending_calendars: list[tuple[str, str]] = []  # (cal_id, label) to send
+        self._reservation_tokens: dict[str, dict] = {}  # resy_token → reservation info
 
         self.client = genai.Client(
             vertexai=True,
@@ -341,12 +375,15 @@ class ChatSession:
 
                 log_entry({
                     "status": "booked",
+                    "source": "bot",
                     "venue": ctx["venue_name"],
                     "venue_id": ctx["venue_id"],
                     "date": ctx["date"],
                     "time": pending["time"],
                     "party_size": ctx["party_size"],
                     "confirmation_token": resy_token,
+                    "cancellation_deadline": pending["terms"].get("cancellation_deadline"),
+                    "cancellation_fee": pending["terms"].get("cancellation_fee"),
                     "booked_at": datetime.now().isoformat(),
                     "created_at": datetime.now().isoformat(),
                 })
@@ -410,17 +447,96 @@ class ChatSession:
                 self._pending_calendars.append((cal_id, "cancellation"))
                 return {"result": "Calendar reminder created. A download link will be sent to you."}
 
-            elif tool_name == "watch_for_cancellations":
+            elif tool_name == "prepare_watch":
                 if not self._venue_context:
                     return {"error": "No venue context. Call find_slots first."}
+
                 ctx = self._venue_context
+                requested_time = tool_input.get("time", "")
+
+                # Find a config_token to fetch terms — use requested time or any cached slot
+                slot = None
+                if requested_time:
+                    slot = self._resolve_slot(requested_time)
+                if not slot and self._slot_cache:
+                    slot = next(iter(self._slot_cache.values()))
+
+                if not slot:
+                    # No cached slots — fetch fresh ones just for terms lookup
+                    try:
+                        fresh_slots = self.resy.find_slots(
+                            ctx["venue_id"], ctx["party_size"], ctx["date"],
+                        )
+                    except Exception as e:
+                        return {"error": f"Could not fetch slots for terms lookup: {e}"}
+                    if not fresh_slots:
+                        return {
+                            "error": "No slots available at all for this venue/date. "
+                            "Cannot look up cancellation terms.",
+                        }
+                    slot = fresh_slots[0]
+
+                config_token = slot.get("config", {}).get("token", "")
+                try:
+                    details = self.resy.get_details(
+                        config_token, ctx["date"], ctx["party_size"],
+                    )
+                except Exception as e:
+                    return {"error": f"Could not fetch cancellation terms: {e}"}
+
+                terms = {
+                    "cancellation_policy": details.get("cancellation_policy"),
+                    "cancellation_fee": details.get("cancellation_fee"),
+                    "cancellation_deadline": details.get("cancellation_deadline"),
+                    "payment_type": details.get("payment_type"),
+                    "payment_total": details.get("payment_total"),
+                }
+
+                self._pending_watch = {
+                    "terms": terms,
+                    "venue_context": dict(ctx),
+                }
+
+                return {
+                    "status": "ready",
+                    "message": (
+                        "Present these terms to the user. Explain that once the watch "
+                        "is armed, the bot will auto-book instantly when a match is "
+                        "found. Wait for confirmation before calling confirm_watch."
+                    ),
+                    "cancellation_policy": terms["cancellation_policy"],
+                    "cancellation_fee": terms["cancellation_fee"],
+                    "cancellation_deadline": terms["cancellation_deadline"],
+                    "payment_type": terms["payment_type"],
+                    "payment_total": terms["payment_total"],
+                }
+
+            elif tool_name == "confirm_watch":
+                if not self._pending_watch:
+                    return {"error": "No pending watch. Call prepare_watch first."}
+
+                pw = self._pending_watch
+                ctx = pw["venue_context"]
+                terms = pw["terms"]
+                preferred_times = list(tool_input.get("preferred_times", []))
+                snipe_at = tool_input.get("snipe_at")
+                dates = list(tool_input.get("dates", [])) or [ctx["date"]]
+
+                self._pending_watch = None
+
                 params = {
                     "venue_id": ctx["venue_id"],
                     "venue_name": ctx["venue_name"],
                     "party_size": ctx["party_size"],
                     "date": ctx["date"],
-                    "preferred_times": list(tool_input.get("preferred_times", [])),
+                    "dates": dates,
+                    "preferred_times": preferred_times,
+                    "auto_book": True,
+                    "terms": terms,
                 }
+                if snipe_at:
+                    params["snipe_at"] = snipe_at
+
                 return {"__watch__": True, "params": params}
 
             elif tool_name == "get_log":
@@ -465,6 +581,33 @@ class ChatSession:
                 except Exception as e:
                     log.exception("Cancel failed")
                     return {"error": f"Cancellation failed: {e}"}
+
+                # Track cancellation in log
+                entries = load_log()
+                matched = False
+                for entry in entries:
+                    if (entry and entry.get("status") == "booked"
+                            and entry.get("confirmation_token") == resy_token):
+                        entry["status"] = "cancelled"
+                        entry["source"] = "bot"
+                        entry["cancelled_at"] = datetime.now().isoformat()
+                        matched = True
+                        break
+                if not matched:
+                    # Fallback: append a new cancelled entry
+                    venue_info = (self._reservation_tokens or {}).get(resy_token, {})
+                    entries.append({
+                        "status": "cancelled",
+                        "source": "bot",
+                        "venue": venue_info.get("venue_name", "Unknown"),
+                        "date": venue_info.get("day", ""),
+                        "time": venue_info.get("time_slot", ""),
+                        "party_size": venue_info.get("num_seats", ""),
+                        "cancelled_at": datetime.now().isoformat(),
+                        "created_at": datetime.now().isoformat(),
+                    })
+                save_log(entries)
+
                 return {"result": "Reservation cancelled successfully."}
 
             else:
@@ -524,10 +667,15 @@ class ChatSession:
                 if isinstance(result, dict) and result.get("__watch__"):
                     params = result["params"]
                     events.append({"type": "watch", "params": params})
+                    dates_str = ", ".join(params.get("dates", [params["date"]]))
+                    times_str = ", ".join(params["preferred_times"])
+                    snipe_note = ""
+                    if params.get("snipe_at"):
+                        snipe_note = f" Snipe mode active — will poll aggressively starting at {params['snipe_at']}."
                     result = {
-                        "result": f"Now watching for cancellations at "
-                        f"{', '.join(params['preferred_times'])} "
-                        f"at {params['venue_name']} on {params['date']}."
+                        "result": f"Watch armed with auto-book! Watching for "
+                        f"{times_str} at {params['venue_name']} on {dates_str}."
+                        f"{snipe_note} I'll book instantly when a match opens up."
                     }
 
                 function_responses.append(
