@@ -1,3 +1,7 @@
 .env
 __pycache__/
 *.pyc
+cal/
+resy_debug.json
+reservations_log.json
+test_booking.py
