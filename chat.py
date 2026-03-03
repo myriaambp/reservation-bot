@@ -33,6 +33,12 @@ Ask which one they want to cancel. Once they pick one, confirm they're sure, the
 cancel_reservation with the resy_token.
 
 WATCHING FOR CANCELLATIONS / SNIPING:
+CRITICAL RULE: Before calling prepare_watch, you MUST check the find_slots results to see if
+any available times already fall within the user's requested window. For example, if slots include
+8:00 PM and the user asks to "watch for anything between 7 and 9 PM", do NOT set up a watch.
+Instead say something like "Actually, 8:00 PM is available right now! Want me to book that?"
+Only use prepare_watch when NO available slots match the user's preferred times or range.
+
 When the user wants to watch for a time slot to open up, or "snipe" when tables are released:
 1. First call find_slots (if not already done) to set up venue context.
 2. Call prepare_watch with a time — this fetches cancellation terms for the venue.
@@ -382,6 +388,7 @@ class ChatSession:
                     "time": pending["time"],
                     "party_size": ctx["party_size"],
                     "confirmation_token": resy_token,
+                    "cancellation_policy": pending["terms"].get("cancellation_policy"),
                     "cancellation_deadline": pending["terms"].get("cancellation_deadline"),
                     "cancellation_fee": pending["terms"].get("cancellation_fee"),
                     "booked_at": datetime.now().isoformat(),

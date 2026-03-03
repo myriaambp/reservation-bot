@@ -186,6 +186,7 @@ def _auto_book(
         "time": match_time,
         "party_size": party_size,
         "confirmation_token": resy_token,
+        "cancellation_policy": terms.get("cancellation_policy"),
         "cancellation_deadline": terms.get("cancellation_deadline"),
         "cancellation_fee": terms.get("cancellation_fee"),
         "booked_at": datetime.now().isoformat(),
